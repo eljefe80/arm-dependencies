@@ -12,8 +12,11 @@ RUN \
     apt upgrade -y -o Dpkg::Options::="--force-confold"
 
 # create an arm group(gid 1000) and an arm user(uid 1000), with password logon disabled
-RUN groupadd -g 1000 arm \
-    && useradd -rm -d /home/arm -s /bin/bash -g arm -G video,cdrom -u 1000 arm
+# noble ships a default ubuntu user at UID/GID 1000 — remove it first
+RUN userdel -r ubuntu 2>/dev/null || true && \
+    groupdel ubuntu 2>/dev/null || true && \
+    groupadd -g 1000 arm && \
+    useradd -rm -d /home/arm -s /bin/bash -g arm -G video,cdrom -u 1000 arm
 
 # enable support for Arch Linux and derivatives, who use a different user group for optical drive permissions
 RUN groupadd -g 990 optical \
