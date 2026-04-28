@@ -98,7 +98,7 @@ RUN \
 # install python reqs
 # PIP_BREAK_SYSTEM_PACKAGES=1 is required on noble (Python 3.12 / PEP 668)
 COPY requirements.txt ./requirements.txt
-RUN PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install --upgrade pip wheel setuptools psutil pyudev
+RUN PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install --ignore-installed --upgrade pip wheel setuptools psutil pyudev
 RUN PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install --ignore-installed --prefer-binary -r ./requirements.txt
 
 ###########################################################
