@@ -1,6 +1,6 @@
 ###########################################################
 # base image, used for build stages and final images
-FROM phusion/baseimage:jammy-1.0.4 AS base
+FROM phusion/baseimage:noble-1.0.3 AS base
 ARG DEBIAN_FRONTEND=noninteractive
 RUN mkdir /opt/arm
 WORKDIR /opt/arm
@@ -28,11 +28,10 @@ ENV ARM_UID=1000
 ENV ARM_GID=1000
 
 # Intel GPU runtime — provides the iHD VA driver needed for QSV hardware encoding.
-# Uses Intel's official GPU repository for jammy to get current driver versions.
 RUN apt-get install -y --no-install-recommends wget gnupg ca-certificates && \
     wget -qO- https://repositories.intel.com/gpu/intel-graphics.key | \
       gpg --yes --dearmor -o /usr/share/keyrings/intel-graphics.gpg && \
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy unified" \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu noble unified" \
       > /etc/apt/sources.list.d/intel-gpu.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -77,7 +76,6 @@ RUN install_clean \
         eject \
         ffmpeg \
         flac \
-        glyrc \
         default-jre-headless \
         id3 \
         id3v2 \
@@ -95,9 +93,10 @@ RUN \
     dpkg-reconfigure libdvd-pkg
 
 # install python reqs
+# PIP_BREAK_SYSTEM_PACKAGES=1 is required on noble (Python 3.12 / PEP 668)
 COPY requirements.txt ./requirements.txt
-RUN pip3 install --upgrade pip wheel setuptools psutil pyudev
-RUN pip3 install --ignore-installed --prefer-binary -r ./requirements.txt
+RUN PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install --upgrade pip wheel setuptools psutil pyudev
+RUN PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install --ignore-installed --prefer-binary -r ./requirements.txt
 
 ###########################################################
 # install makemkv and handbrake
@@ -133,7 +132,7 @@ COPY scripts/vadrv.map /tmp/vadrv.map
 RUN gcc -shared -fPIC -Wl,--version-script=/tmp/vadrv.map -ldl \
       -o /usr/lib/x86_64-linux-gnu/vadrv_shim.so /tmp/vadrv_shim.c && \
     echo '/usr/lib/x86_64-linux-gnu/vadrv_shim.so' > /etc/ld.so.preload && \
-    nm -D /usr/lib/x86_64-linux-gnu/vadrv_shim.so | grep vaGetDriverName && \
+    nm -D /usr/lib/x86_64-linux-gnu/vadrv_shim.so | grep -E 'vaGetDriverName|vaGetDeviceID' && \
     rm /tmp/vadrv_shim.c /tmp/vadrv.map
 
 # LIBVA environment — ensures the iHD driver is selected even in environments
