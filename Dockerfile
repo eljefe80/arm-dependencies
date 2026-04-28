@@ -1,6 +1,7 @@
 ###########################################################
 # base image, used for build stages and final images
 FROM phusion/baseimage:jammy-1.0.4 AS base
+ARG DEBIAN_FRONTEND=noninteractive
 RUN mkdir /opt/arm
 WORKDIR /opt/arm
 
@@ -9,6 +10,7 @@ RUN \
     apt clean && \
     apt update && \
     apt upgrade -y -o Dpkg::Options::="--force-confold"
+
 # create an arm group(gid 1000) and an arm user(uid 1000), with password logon disabled
 RUN groupadd -g 1000 arm \
     && useradd -rm -d /home/arm -s /bin/bash -g arm -G video,cdrom -u 1000 arm
@@ -17,16 +19,28 @@ RUN groupadd -g 1000 arm \
 RUN groupadd -g 990 optical \
     && usermod -aG optical arm
 
-# Enable support for Fedora derivatives, which uses GID 11 for the cdrom group for optical drive permissions, whereas Ubuntu uses GID 24 for the same group name.
+# Enable support for Fedora derivatives, which uses GID 11 for the cdrom group
 RUN groupadd -g 11 cdrom_Fedora \
    && usermod -aG cdrom_Fedora arm
 
-
-# set the default environment variables
-# UID and GID are not settable as of https://github.com/phusion/baseimage-docker/pull/86, as doing so would
-# break multi-account containers
+# UID and GID are not settable as of https://github.com/phusion/baseimage-docker/pull/86
 ENV ARM_UID=1000
 ENV ARM_GID=1000
+
+# Intel GPU runtime — provides the iHD VA driver needed for QSV hardware encoding.
+# Uses Intel's official GPU repository for jammy to get current driver versions.
+RUN apt-get install -y --no-install-recommends wget gnupg ca-certificates && \
+    wget -qO- https://repositories.intel.com/gpu/intel-graphics.key | \
+      gpg --yes --dearmor -o /usr/share/keyrings/intel-graphics.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy unified" \
+      > /etc/apt/sources.list.d/intel-gpu.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+      intel-media-va-driver \
+      libva2 \
+      libva-drm2 \
+      libmfx-gen1.2 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # setup gnupg/wget for add-ppa.sh
 RUN install_clean \
@@ -101,6 +115,33 @@ COPY ./scripts/install_makemkv.sh /install_makemkv.sh
 RUN chmod +x /install_makemkv.sh && sleep 1 && \
     /install_makemkv.sh
 
+# Build and install the QSV fix shim.
+#
+# Root cause: libmfx-gen (oneVPL GPU runtime) loads libva via dlopen(RTLD_DEEPBIND),
+# isolating libva in a private symbol scope. vaGetDriverName() then fails on the
+# MFX-internal VA display (VA_STATUS_ERROR_UNIMPLEMENTED), causing FFmpeg to abort
+# QSV hwdevice creation. This is architectural in libmfx-gen and affects all versions.
+#
+# The shim fixes this via two mechanisms:
+#   1. dlopen override: strips RTLD_DEEPBIND for libva loads → global scope
+#   2. vaGetDriverName override: returns "iHD" so FFmpeg proceeds past the check
+#
+# Placed in /etc/ld.so.preload so it is effective for all processes at runtime
+# without any wrapper scripts or environment variable configuration.
+COPY scripts/vadrv_shim.c /tmp/vadrv_shim.c
+COPY scripts/vadrv.map /tmp/vadrv.map
+RUN gcc -shared -fPIC -Wl,--version-script=/tmp/vadrv.map -ldl \
+      -o /usr/lib/x86_64-linux-gnu/vadrv_shim.so /tmp/vadrv_shim.c && \
+    echo '/usr/lib/x86_64-linux-gnu/vadrv_shim.so' > /etc/ld.so.preload && \
+    nm -D /usr/lib/x86_64-linux-gnu/vadrv_shim.so | grep vaGetDriverName && \
+    rm /tmp/vadrv_shim.c /tmp/vadrv.map
+
+# LIBVA environment — ensures the iHD driver is selected even in environments
+# where udev/DRM auto-detection is unavailable (e.g. containers without /dev/dri).
+ENV LIBVA_DRIVER_NAME=iHD
+ENV LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
+ENV LIBVA_DRM_DEVICE=/dev/dri/renderD128
+
 # clean up apt
 RUN apt clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
@@ -110,7 +151,6 @@ RUN chmod +x /healthcheck.sh
 HEALTHCHECK --interval=5m --timeout=15s --start-period=30s CMD /healthcheck.sh
 
 # Set Timezone data
-ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
 RUN install_clean tzdata && \
     ln -sf /usr/share/zoneinfo/$TZ /etc/localtime && \
@@ -118,11 +158,10 @@ RUN install_clean tzdata && \
 
 ARG VERSION
 ARG BUILD_DATE
-# set metadata
-LABEL org.opencontainers.image.source=https://github.com/automatic-ripping-machine/arm-dependencies.git
-LABEL org.opencontainers.image.url=https://github.com/automatic-ripping-machine/arm-dependencies
-LABEL org.opencontainers.image.description="Dependencies for Automatic Ripping Machine"
-LABEL org.opencontainers.image.documentation=https://raw.githubusercontent.com/automatic-ripping-machine/arm-dependencies/main/README.md
+LABEL org.opencontainers.image.source=https://github.com/eljefe80/arm-dependencies.git
+LABEL org.opencontainers.image.url=https://github.com/eljefe80/arm-dependencies
+LABEL org.opencontainers.image.description="Dependencies for Automatic Ripping Machine (eljefe80 fork — Intel QSV support baked in)"
+LABEL org.opencontainers.image.documentation=https://raw.githubusercontent.com/eljefe80/arm-dependencies/main/README.md
 LABEL org.opencontainers.image.license=MIT
 LABEL org.opencontainers.image.version=$VERSION
 LABEL org.opencontainers.image.created=$BUILD_DATE

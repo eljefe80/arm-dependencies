@@ -1,0 +1,13 @@
+/* Linker version script for vadrv_shim.so
+ *
+ * vaGetDriverName must be exported as vaGetDriverName@@VA_API_1.15.0 to match
+ * the versioned symbol in libva.so.2. Without the matching version node, glibc's
+ * dynamic linker will not use an unversioned LD_PRELOAD symbol to satisfy a
+ * versioned symbol requirement.
+ *
+ * dlopen is exported unversioned (not listed under any version node) so it
+ * overrides the glibc dlopen without version conflicts.
+ */
+VA_API_1.15.0 {
+    global: vaGetDriverName;
+};
